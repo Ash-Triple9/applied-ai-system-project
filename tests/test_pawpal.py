@@ -148,6 +148,23 @@ class TestRecurrenceLogic:
         assert result is None
         assert len(pet.tasks) == 1  # no new task appended
 
+    def test_one_time_only_task_produces_no_next_occurrence(self):
+        """complete_and_reschedule on a one_time_only task returns None."""
+        pet = Pet(name="Mochi", species="dog")
+        pet.add_task(
+            Task(
+                title="Vet visit",
+                duration_minutes=60,
+                priority="high",
+                frequency="one_time_only",
+            )
+        )
+
+        result = pet.complete_and_reschedule("Vet visit", today=_today())
+
+        assert result is None
+        assert len(pet.tasks) == 1  # no new task appended
+
     def test_next_occurrence_not_due_until_its_date(self):
         """A freshly rescheduled daily task does not appear in today's pending list."""
         pet = Pet(name="Mochi", species="dog")
@@ -303,3 +320,46 @@ class TestEdgeCases:
         """preferred_time values outside HH:MM 24-hour format raise ValueError."""
         with pytest.raises(ValueError, match="preferred_time"):
             Task(title="Bad task", duration_minutes=10, priority="high", preferred_time="25:00")
+
+    def test_duplicate_pet_name_and_species_raises_value_error(self):
+        """Owner cannot register the same pet name+species twice."""
+        owner = Owner(name="Alex", email="alex@example.com", available_minutes=60)
+        owner.add_pet(Pet(name="Joey", species="dog"))
+        with pytest.raises(ValueError, match="already registered"):
+            owner.add_pet(Pet(name="Joey", species="dog"))
+
+    def test_duplicate_pending_task_title_for_pet_raises_value_error(self):
+        """Pet cannot add the same pending task title twice."""
+        pet = Pet(name="Joey", species="dog")
+        pet.add_task(Task(title="Playtime", duration_minutes=20, priority="medium"))
+        with pytest.raises(ValueError, match="already pending"):
+            pet.add_task(Task(title="Playtime", duration_minutes=15, priority="high"))
+
+    def test_non_negotiable_task_always_included(self):
+        """Non-negotiable tasks are scheduled even when budget is tight."""
+        owner, pet, scheduler = _make_owner_with_pet(available_minutes=10)
+        pet.add_task(
+            Task(
+                title="Medication",
+                duration_minutes=20,
+                priority="high",
+                non_negotiable=True,
+            )
+        )
+        scheduler.build_schedule()
+        scheduled_titles = [t.title for t in scheduler.scheduled_tasks]
+        assert "Medication" in scheduled_titles
+
+    def test_non_negotiable_over_budget_adds_warning(self):
+        """Scheduler warns when mandatory tasks alone exceed budget."""
+        owner, pet, scheduler = _make_owner_with_pet(available_minutes=15)
+        pet.add_task(
+            Task(
+                title="Medication",
+                duration_minutes=20,
+                priority="high",
+                non_negotiable=True,
+            )
+        )
+        scheduler.build_schedule()
+        assert any("Non-negotiable tasks exceed available time" in c for c in scheduler.conflicts)

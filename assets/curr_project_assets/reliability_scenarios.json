@@ -1,0 +1,118 @@
+{
+  "scenarios": [
+    {
+      "scenario_id": "balanced_day",
+      "owner": {
+        "name": "Jordan",
+        "email": "jordan@example.com",
+        "available_minutes": 60
+      },
+      "day_start_minutes": 480,
+      "tasks": [
+        {
+          "task_id": "t1",
+          "pet_name": "Mochi",
+          "title": "Morning walk",
+          "duration_minutes": 30,
+          "priority": "high",
+          "frequency": "daily",
+          "preferred_time": "08:00"
+        },
+        {
+          "task_id": "t2",
+          "pet_name": "Mochi",
+          "title": "Feeding",
+          "duration_minutes": 10,
+          "priority": "high",
+          "frequency": "daily",
+          "preferred_time": "08:45"
+        },
+        {
+          "task_id": "t3",
+          "pet_name": "Luna",
+          "title": "Playtime",
+          "duration_minutes": 20,
+          "priority": "medium",
+          "frequency": "daily",
+          "preferred_time": "09:00"
+        }
+      ]
+    },
+    {
+      "scenario_id": "tight_budget_priority_tradeoff",
+      "owner": {
+        "name": "Alex",
+        "email": "alex@example.com",
+        "available_minutes": 35
+      },
+      "day_start_minutes": 480,
+      "tasks": [
+        {
+          "task_id": "t10",
+          "pet_name": "Rex",
+          "title": "Medication",
+          "duration_minutes": 10,
+          "priority": "high",
+          "frequency": "daily",
+          "preferred_time": "08:00"
+        },
+        {
+          "task_id": "t11",
+          "pet_name": "Rex",
+          "title": "Morning walk",
+          "duration_minutes": 30,
+          "priority": "high",
+          "frequency": "daily",
+          "preferred_time": "08:10"
+        },
+        {
+          "task_id": "t12",
+          "pet_name": "Mia",
+          "title": "Litter cleaning",
+          "duration_minutes": 15,
+          "priority": "medium",
+          "frequency": "daily",
+          "preferred_time": "08:20"
+        }
+      ]
+    },
+    {
+      "scenario_id": "overlap_detection_case",
+      "owner": {
+        "name": "Sam",
+        "email": "sam@example.com",
+        "available_minutes": 90
+      },
+      "day_start_minutes": 480,
+      "tasks": [
+        {
+          "task_id": "t20",
+          "pet_name": "Bolt",
+          "title": "Vet check",
+          "duration_minutes": 30,
+          "priority": "high",
+          "frequency": "daily",
+          "preferred_time": "08:00"
+        },
+        {
+          "task_id": "t21",
+          "pet_name": "Whiskers",
+          "title": "Feeding",
+          "duration_minutes": 20,
+          "priority": "high",
+          "frequency": "daily",
+          "preferred_time": "08:10"
+        },
+        {
+          "task_id": "t22",
+          "pet_name": "Whiskers",
+          "title": "Brushing",
+          "duration_minutes": 15,
+          "priority": "low",
+          "frequency": "daily",
+          "preferred_time": "09:00"
+        }
+      ]
+    }
+  ]
+}

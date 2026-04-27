@@ -1,0 +1,27 @@
+flowchart LR
+  subgraph in["Test Inputs"]
+    DATA[Owner / pet / task scenarios]
+    PROMPTS[Prompt set + expected criteria]
+  end
+
+  subgraph ai["AI Scheduling Layer"]
+    MODEL[AI model or agent]
+    OUTPUT[Generated schedule + explanation]
+  end
+
+  subgraph eval["Reliability Testing"]
+    SCRIPT[Test script<br/>repeat N runs]
+    CHECKS[Consistency + rule checks<br/>compare outputs]
+    METRICS[Reliability metrics<br/>consistency score, pass rate]
+    RESULT[Test outcome<br/>pass / fail]
+  end
+
+  HUMAN[Human reviewer]
+
+  DATA --> MODEL
+  PROMPTS --> SCRIPT
+  MODEL --> OUTPUT
+  OUTPUT --> SCRIPT
+  SCRIPT --> CHECKS --> METRICS --> RESULT
+  RESULT --> HUMAN
+  HUMAN -. feedback .-> PROMPTS

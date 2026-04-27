@@ -30,7 +30,7 @@ Tasks are sorted by:
 Frequency filtering
 -------------------
 ``get_pending_tasks()`` respects the ``Task.frequency`` field:
-  - ``"daily"`` and ``"as_needed"`` tasks are always eligible.
+  - ``"daily"``, ``"as_needed"``, and ``"one_time_only"`` tasks are always eligible.
   - ``"weekly"`` tasks are eligible only when never completed or
     last completed ≥ 7 days ago (tracked via ``Task.last_done_date``).
 
@@ -57,7 +57,7 @@ from typing import Optional
 
 PRIORITY_ORDER = {"high": 0, "medium": 1, "low": 2}
 VALID_PRIORITIES = set(PRIORITY_ORDER.keys())
-VALID_FREQUENCIES = {"daily", "weekly", "as_needed"}
+VALID_FREQUENCIES = {"daily", "weekly", "as_needed", "one_time_only"}
 
 
 @dataclass
@@ -75,7 +75,7 @@ class Task:
         Scheduling urgency — one of ``"high"``, ``"medium"``, or ``"low"``.
     frequency : str
         How often the task recurs — ``"daily"`` (default), ``"weekly"``,
-        or ``"as_needed"``.
+        ``"as_needed"``, or ``"one_time_only"``.
     completed : bool
         ``True`` once the task has been marked done for the day.
     pet_name : str or None
@@ -92,6 +92,10 @@ class Task:
         format (e.g. ``"08:00"``, ``"17:30"``). Used by
         ``Scheduler.sort_by_time()`` to order tasks chronologically.
         ``None`` means no preference; such tasks sort to the end.
+    non_negotiable : bool
+        When ``True``, this task must be included in the schedule.
+        ``Scheduler.build_schedule()`` always places non-negotiable tasks
+        first, even if their total duration exceeds the owner's time budget.
     next_due_date : str or None
         ISO date (``"YYYY-MM-DD"``) on or after which this task becomes
         eligible again. Set automatically by ``Pet.complete_and_reschedule()``
@@ -99,7 +103,8 @@ class Task:
 
         - ``"daily"``  → today + 1 day  (via ``timedelta(days=1)``)
         - ``"weekly"`` → today + 7 days (via ``timedelta(days=7)``)
-        - ``"as_needed"`` → not set; no next occurrence is created
+        - ``"as_needed"`` / ``"one_time_only"`` → not set; no next occurrence
+          is created
 
         When ``None``, ``is_due_today()`` falls back to frequency logic.
     """
@@ -107,12 +112,13 @@ class Task:
     title: str
     duration_minutes: int
     priority: str           # "low", "medium", or "high"
-    frequency: str = "daily"  # "daily", "weekly", "as_needed"
+    frequency: str = "daily"  # "daily", "weekly", "as_needed", "one_time_only"
     completed: bool = False
     pet_name: Optional[str] = None
     last_done_date: Optional[str] = None   # set on mark_complete()
     scheduled_start: Optional[int] = None  # set by Scheduler
     preferred_time: Optional[str] = None   # "HH:MM" owner preference
+    non_negotiable: bool = False
     next_due_date: Optional[str] = None    # set by complete_and_reschedule()
 
     def __post_init__(self) -> None:
@@ -146,7 +152,8 @@ class Task:
         1. If ``next_due_date`` is set (placed by ``complete_and_reschedule``),
            the task is eligible only on or after that date — this takes
            priority over the frequency rules below.
-        2. ``"daily"`` and ``"as_needed"`` tasks are always eligible.
+        2. ``"daily"``, ``"as_needed"``, and ``"one_time_only"`` tasks are
+           always eligible.
         3. ``"weekly"`` tasks are eligible when never completed or when
            last completed ≥ 7 days ago (``last_done_date`` check).
 
@@ -170,7 +177,7 @@ class Task:
         if self.next_due_date is not None:
             return date.fromisoformat(today) >= date.fromisoformat(self.next_due_date)
 
-        if self.frequency in ("daily", "as_needed"):
+        if self.frequency in ("daily", "as_needed", "one_time_only"):
             return True
 
         # weekly — eligible only after a 7-day gap since last completion
@@ -297,6 +304,11 @@ class Pet:
         task : Task
             The task to add.
         """
+        if any(existing.title == task.title and not existing.completed for existing in self.tasks):
+            raise ValueError(
+                f"Task '{task.title}' is already pending for pet '{self.name}'. "
+                "Complete it first before adding another with the same name."
+            )
         task.pet_name = self.name
         self.tasks.append(task)
 
@@ -342,7 +354,8 @@ class Pet:
 
         - ``"daily"``  → ``today + timedelta(days=1)``  (tomorrow)
         - ``"weekly"`` → ``today + timedelta(days=7)``  (one week from today)
-        - ``"as_needed"`` → task is marked complete; no new instance is created.
+        - ``"as_needed"`` / ``"one_time_only"`` → task is marked complete;
+          no new instance is created.
 
         The original task stays in ``self.tasks`` with ``completed=True``
         (useful for history). The new instance is appended and will appear
@@ -361,7 +374,8 @@ class Pet:
         -------
         Task or None
             The newly created next-occurrence ``Task``, or ``None`` when
-            the frequency is ``"as_needed"`` or no matching task is found.
+            the frequency is ``"as_needed"`` / ``"one_time_only"`` or no
+            matching task is found.
         """
         if today is None:
             today = date.today().isoformat()
@@ -374,7 +388,7 @@ class Pet:
 
         task.mark_complete()
 
-        if task.frequency == "as_needed":
+        if task.frequency in ("as_needed", "one_time_only"):
             return None
 
         today_date = date.fromisoformat(today)
@@ -390,6 +404,7 @@ class Pet:
             frequency=task.frequency,
             pet_name=task.pet_name,
             preferred_time=task.preferred_time,
+            non_negotiable=task.non_negotiable,
             next_due_date=next_due.isoformat(),
         )
         self.tasks.append(next_task)
@@ -444,6 +459,10 @@ class Owner:
         pet : Pet
             The pet to add.
         """
+        if any(existing.name == pet.name and existing.species == pet.species for existing in self.pets):
+            raise ValueError(
+                f"Pet '{pet.name}' ({pet.species}) is already registered."
+            )
         self.pets.append(pet)
 
     def get_pet(self, name: str) -> Optional[Pet]:
@@ -600,16 +619,32 @@ class Scheduler:
             key=lambda t: (PRIORITY_ORDER.get(t.priority, 99), t.duration_minutes),
         )
 
+        non_negotiable_tasks = [t for t in sorted_tasks if t.non_negotiable]
+        negotiable_tasks = [t for t in sorted_tasks if not t.non_negotiable]
+        required_minutes = sum(t.duration_minutes for t in non_negotiable_tasks)
         available = self.owner.available_minutes
         self.scheduled_tasks = []
         self.skipped_tasks = []
 
-        for task in sorted_tasks:
+        # Always include non-negotiable tasks.
+        for task in non_negotiable_tasks:
+            self.scheduled_tasks.append(task)
+            available -= task.duration_minutes
+
+        # Greedily include negotiable tasks with remaining budget.
+        for task in negotiable_tasks:
             if task.duration_minutes <= available:
                 self.scheduled_tasks.append(task)
                 available -= task.duration_minutes
             else:
                 self.skipped_tasks.append(task)
+
+        if required_minutes > self.owner.available_minutes:
+            self.conflicts.append(
+                "Non-negotiable tasks exceed available time "
+                f"({required_minutes} / {self.owner.available_minutes} min). "
+                "All non-negotiable tasks were still scheduled."
+            )
 
         # Assign contiguous time slots from day_start_minutes
         current_time = self.day_start_minutes

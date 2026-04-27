@@ -1,11 +1,18 @@
 from datetime import time as dtime
+from datetime import UTC, datetime
+import json
+from pathlib import Path
 
 import streamlit as st
+from ai_scheduler import AISchedulerAdapter, ScenarioInput, ScenarioTask
 from pawpal_system import Owner, Pet, Task, Scheduler
+from reliability_evaluator import evaluate_scenario_runs
 
 st.set_page_config(page_title="PawPal+", page_icon="🐾", layout="centered")
 st.title("🐾 PawPal+")
 st.caption("A daily pet care scheduler.")
+
+APP_ROOT = Path(__file__).resolve().parent
 
 # ── Session state initialisation ──────────────────────────────────────────────
 if "owner" not in st.session_state:
@@ -13,6 +20,9 @@ if "owner" not in st.session_state:
 
 if "scheduler" not in st.session_state:
     st.session_state["scheduler"] = None
+
+if "reliability_results" not in st.session_state:
+    st.session_state["reliability_results"] = None
 
 # ── Section 1: Owner setup ─────────────────────────────────────────────────────
 st.header("1. Owner Info")
@@ -67,8 +77,11 @@ if add_pet:
             species=species,
             special_needs=special_needs.strip() or None,
         )
-        owner.add_pet(new_pet)
-        st.success(f"Added **{pet_name}** ({species}).")
+        try:
+            owner.add_pet(new_pet)
+            st.success(f"Added **{pet_name}** ({species}).")
+        except ValueError as exc:
+            st.warning(str(exc))
 
 if owner.pets:
     for pet in owner.pets:
@@ -90,9 +103,22 @@ if not owner.pets:
 else:
     pet_names = [p.name for p in owner.pets]
 
+    # Keep preferred-time controls outside the form so the checkbox can
+    # immediately lock/unlock the time input on click.
+    col_pt1, col_pt2 = st.columns([1, 3])
+    with col_pt1:
+        set_pref_time = st.checkbox("Set preferred time?", key="set_pref_time")
+    with col_pt2:
+        pref_time_input = st.time_input(
+            "Preferred start time",
+            value=dtime(8, 0),
+            key="pref_time_input",
+            disabled=not set_pref_time,
+        )
+
     with st.form("task_form"):
         selected_pet_name = st.selectbox("Assign to pet", pet_names)
-        col1, col2, col3, col4 = st.columns(4)
+        col1, col2, col3, col4, col5 = st.columns(5)
         with col1:
             task_title = st.text_input("Task title", value="Morning walk")
         with col2:
@@ -100,19 +126,11 @@ else:
         with col3:
             priority = st.selectbox("Priority", ["high", "medium", "low"])
         with col4:
-            frequency = st.selectbox("Frequency", ["daily", "weekly", "as_needed"])
-
-        # Optional preferred_time — feeds Scheduler.sort_by_time() and detect_time_conflicts()
-        col_pt1, col_pt2 = st.columns([1, 3])
-        with col_pt1:
-            set_pref_time = st.checkbox("Set preferred time?")
-        with col_pt2:
-            pref_time_input = st.time_input(
-                "Preferred start time",
-                value=dtime(8, 0),
-                key="pref_time_input",
-                disabled=not set_pref_time,
+            frequency = st.selectbox(
+                "Frequency", ["daily", "weekly", "as_needed", "one_time_only"]
             )
+        with col5:
+            non_negotiable = st.checkbox("Non-negotiable task")
 
         add_task = st.form_submit_button("Add task")
 
@@ -126,17 +144,21 @@ else:
                 if set_pref_time
                 else None
             )
-            target_pet.add_task(
-                Task(
-                    title=task_title.strip(),
-                    duration_minutes=int(duration),
-                    priority=priority,
-                    frequency=frequency,
-                    preferred_time=preferred_time,
+            try:
+                target_pet.add_task(
+                    Task(
+                        title=task_title.strip(),
+                        duration_minutes=int(duration),
+                        priority=priority,
+                        frequency=frequency,
+                        preferred_time=preferred_time,
+                        non_negotiable=non_negotiable,
+                    )
                 )
-            )
-            st.session_state["scheduler"] = None  # invalidate old schedule
-            st.success(f"Added **{task_title}** to {selected_pet_name}.")
+                st.session_state["scheduler"] = None  # invalidate old schedule
+                st.success(f"Added **{task_title}** to {selected_pet_name}.")
+            except ValueError as exc:
+                st.warning(str(exc))
 
     # ── Filter controls ───────────────────────────────────────────────────────
     col_f1, col_f2 = st.columns(2)
@@ -173,19 +195,21 @@ else:
         for t in tasks_to_show:
             col_chk, col_info, col_meta = st.columns([1, 5, 2])
             with col_chk:
+                checkbox_key = f"done_{pet.name}_{t.title}_{id(t)}"
                 new_val = st.checkbox(
                     "done",
                     value=t.completed,
-                    key=f"done_{pet.name}_{t.title}",
+                    key=checkbox_key,
                     label_visibility="collapsed",
                 )
             with col_info:
                 title_fmt = f"~~{t.title}~~" if t.completed else f"**{t.title}**"
                 pref_label = f" | pref. `{t.preferred_time}`" if t.preferred_time else ""
+                must_label = " | MUST" if t.non_negotiable else ""
                 badge = PRIORITY_BADGE.get(t.priority, t.priority)
                 st.markdown(
                     f"{title_fmt} — {t.duration_minutes} min"
-                    f" | {badge} | _{t.frequency}_{pref_label}"
+                    f" | {badge} | _{t.frequency}_{pref_label}{must_label}"
                 )
             with col_meta:
                 if t.completed:
@@ -390,3 +414,186 @@ if st.session_state["scheduler"] is not None:
 
     with st.expander("Full plan explanation"):
         st.text(scheduler.explain_plan())
+
+# ── Section 5: AI reliability check ───────────────────────────────────────────
+st.divider()
+st.header("5. AI Reliability Check")
+st.caption("Run reliability checks against your current session's pending tasks.")
+
+col_r1, col_r2 = st.columns(2)
+with col_r1:
+    repeat_runs = st.number_input(
+        "Repeated runs per scenario",
+        min_value=1,
+        max_value=20,
+        value=3,
+        step=1,
+        key="reliability_repeat_runs",
+    )
+with col_r2:
+    compliance_threshold = st.slider(
+        "Compliance threshold",
+        min_value=0.0,
+        max_value=1.0,
+        value=0.95,
+        step=0.01,
+        key="reliability_threshold",
+    )
+
+pending_tasks_for_eval = [
+    (pet, task)
+    for pet in owner.pets
+    for task in pet.tasks
+    if not task.completed
+]
+if not pending_tasks_for_eval:
+    st.info("Add at least one pending task in the app to run reliability checks.")
+
+if st.button(
+    "Run reliability check",
+    key="run_reliability_button",
+    disabled=not pending_tasks_for_eval,
+):
+    try:
+        with st.spinner("Running reliability checks..."):
+            scenario_tasks = []
+            for idx, (pet, task) in enumerate(pending_tasks_for_eval, start=1):
+                scenario_tasks.append(
+                    ScenarioTask(
+                        task_id=f"session_task_{idx}",
+                        pet_name=pet.name,
+                        title=task.title,
+                        duration_minutes=task.duration_minutes,
+                        priority=task.priority,
+                        frequency=task.frequency,
+                        preferred_time=task.preferred_time,
+                    )
+                )
+
+            scenarios = [
+                ScenarioInput(
+                    scenario_id="current_session",
+                    owner_name=owner.name,
+                    owner_email=owner.email,
+                    available_minutes=owner.available_minutes,
+                    day_start_minutes=day_start_minutes,
+                    tasks=scenario_tasks,
+                )
+            ]
+            adapter = AISchedulerAdapter()
+            rows = []
+            for scenario in scenarios:
+                outputs = [adapter.generate_schedule(scenario) for _ in range(int(repeat_runs))]
+                evaluation = evaluate_scenario_runs(scenario, outputs)
+                rows.append(evaluation.to_dict())
+
+            agg_compliance = sum(float(r["compliance_rate"]) for r in rows) / len(rows)
+            agg_consistency = sum(float(r["consistency_rate"]) for r in rows) / len(rows)
+            overall_pass = all(bool(r["passed"]) for r in rows) and agg_compliance >= float(
+                compliance_threshold
+            )
+            st.session_state["reliability_results"] = {
+                "rows": rows,
+                "aggregate_compliance": agg_compliance,
+                "aggregate_consistency": agg_consistency,
+                "overall_pass": overall_pass,
+                "threshold": float(compliance_threshold),
+                "last_run_utc": datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%SZ"),
+            }
+        st.success("Reliability check completed.")
+    except Exception as exc:
+        st.error(f"Reliability check failed: {exc}")
+
+results = st.session_state["reliability_results"]
+if results:
+    st.caption(f"Last run (UTC): {results.get('last_run_utc', 'unknown')}")
+    if results["overall_pass"]:
+        st.success(
+            "PASS "
+            f"(compliance={results['aggregate_compliance']:.2%}, "
+            f"consistency={results['aggregate_consistency']:.2%})"
+        )
+    else:
+        st.error(
+            "FAIL "
+            f"(compliance={results['aggregate_compliance']:.2%}, "
+            f"threshold={results['threshold']:.2%})"
+        )
+
+    st.dataframe(
+        [
+            {
+                "Scenario": row["scenario_id"],
+                "Pass": row["passed"],
+                "Compliance": f"{row['compliance_rate']:.2%}",
+                "Consistency": f"{row['consistency_rate']:.2%}",
+                "Scheduled": row["scheduled_count"],
+                "Skipped": row["skipped_count"],
+            }
+            for row in results["rows"]
+        ],
+        use_container_width=True,
+        hide_index=True,
+    )
+
+    with st.expander("Per-scenario rule checks"):
+        for row in results["rows"]:
+            st.markdown(f"**{row['scenario_id']}**")
+            for check in row["checks"]:
+                label = "PASS" if check["passed"] else "FAIL"
+                st.write(f"- {check['name']}: {label} ({check['details']})")
+
+    if st.button("Export latest reliability report", key="export_reliability_report_button"):
+        try:
+            timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+            output_dir = APP_ROOT / "assets" / "curr_project_assets" / "reports"
+            output_dir.mkdir(parents=True, exist_ok=True)
+            json_path = output_dir / f"reliability_report_{timestamp}.json"
+            md_path = output_dir / f"reliability_report_{timestamp}.md"
+
+            payload = {
+                "generated_at_utc": timestamp,
+                "repeat_runs": int(repeat_runs),
+                "compliance_threshold": float(results["threshold"]),
+                "overall_pass": bool(results["overall_pass"]),
+                "aggregate_compliance_rate": round(float(results["aggregate_compliance"]), 4),
+                "aggregate_consistency_rate": round(float(results["aggregate_consistency"]), 4),
+                "scenario_results": results["rows"],
+            }
+            with open(json_path, "w", encoding="utf-8") as f:
+                json.dump(payload, f, indent=2)
+
+            markdown_lines = [
+                "# PawPal+ Reliability Report",
+                "",
+                f"- Overall pass: **{'PASS' if payload['overall_pass'] else 'FAIL'}**",
+                f"- Aggregate compliance rate: **{payload['aggregate_compliance_rate']:.2%}**",
+                f"- Aggregate consistency rate: **{payload['aggregate_consistency_rate']:.2%}**",
+                "",
+                "## Scenario Results",
+                "",
+            ]
+            for row in results["rows"]:
+                markdown_lines.extend(
+                    [
+                        f"### {row['scenario_id']}",
+                        f"- Pass: {'PASS' if row['passed'] else 'FAIL'}",
+                        f"- Compliance: {row['compliance_rate']:.2%}",
+                        f"- Consistency: {row['consistency_rate']:.2%}",
+                        f"- Scheduled: {row['scheduled_count']}, Skipped: {row['skipped_count']}",
+                        "- Checks:",
+                    ]
+                )
+                for check in row["checks"]:
+                    check_label = "PASS" if check["passed"] else "FAIL"
+                    markdown_lines.append(
+                        f"  - {check['name']}: {check_label} ({check['details']})"
+                    )
+                markdown_lines.append("")
+
+            with open(md_path, "w", encoding="utf-8") as f:
+                f.write("\n".join(markdown_lines))
+
+            st.success(f"Report exported to `{json_path}` and `{md_path}`")
+        except Exception as exc:
+            st.error(f"Export failed: {exc}")

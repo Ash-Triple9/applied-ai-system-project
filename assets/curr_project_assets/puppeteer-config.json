@@ -1,0 +1,4 @@
+{
+  "executablePath": "/var/folders/pm/q24c664168z1724syzynklvw0000gn/T/cursor-sandbox-cache/06913dd2418fdf43ad02fee2f700f00e/puppeteer/chrome-headless-shell/mac_arm-131.0.6778.204/chrome-headless-shell-mac-arm64/chrome-headless-shell",
+  "args": ["--no-sandbox", "--disable-setuid-sandbox"]
+}
