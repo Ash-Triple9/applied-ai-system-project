@@ -1,0 +1,45 @@
+{
+  "generated_at_utc": "20260427T014833Z",
+  "repeat_runs": 6,
+  "compliance_threshold": 0.95,
+  "overall_pass": true,
+  "aggregate_compliance_rate": 1.0,
+  "aggregate_consistency_rate": 1.0,
+  "scenario_results": [
+    {
+      "scenario_id": "current_session",
+      "passed": true,
+      "compliance_rate": 1.0,
+      "consistency_rate": 1.0,
+      "checks": [
+        {
+          "name": "all_tasks_present",
+          "passed": true,
+          "details": "All task_ids present."
+        },
+        {
+          "name": "no_duplicate_tasks",
+          "passed": true,
+          "details": "No duplicate task_ids."
+        },
+        {
+          "name": "budget_limit",
+          "passed": true,
+          "details": "Used=90, Budget=120"
+        },
+        {
+          "name": "priority_inversion",
+          "passed": true,
+          "details": "No priority inversion detected."
+        },
+        {
+          "name": "field_consistency",
+          "passed": true,
+          "details": "All task fields valid."
+        }
+      ],
+      "scheduled_count": 4,
+      "skipped_count": 1
+    }
+  ]
+}

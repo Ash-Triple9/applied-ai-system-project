@@ -1,5 +1,8 @@
 # PawPal+ Reliability Extension
 
+# Loom Link:
+https://www.loom.com/share/187add2f2dd148e29ee976e250baf47f 
+
 ## Original Project (Modules 1-3): PawPal+
 My original Modules 1-3 project is **PawPal+**, a Python + Streamlit pet-care scheduling assistant. Its goal was to help pet owners enter owner/pet/task details and generate a practical daily care plan based on time budget, task priority, and recurrence (daily/weekly/as-needed). The system also explained scheduling decisions and flagged conflicts such as overlapping preferred times or priority inversions.
 
@@ -129,6 +132,8 @@ From a problem-solving perspective, the most effective strategy was incremental 
 
 For future work, I would integrate a real LLM backend behind the same adapter interface, expand adversarial scenario coverage, and add CI enforcement of reliability thresholds so regressions are blocked automatically.
 
+## What This Project Says About Me as an AI Engineer
+This project reflects me as an AI engineer who prioritizes reliability over novelty: I design systems with explicit contracts, test harnesses, and guardrails so outputs are verifiable and trustworthy. I iterate by building deterministic baselines first, then layering AI behavior with measurable evaluation. It also shows that I treat AI critically—using it to accelerate development while validating suggestions through tests and correcting flawed recommendations with evidence-driven decisions.
 
 ## AI Collaboration Reflection
 During development, I used AI as a coding copilot for implementation planning, test design, and debugging edge cases in the scheduler and reliability evaluator. I used it to propose test scenarios (tight budgets, overlapping preferred times, recurrence edge cases), then validated each suggestion by running tests and comparing behavior against project rules.
